@@ -1987,6 +1987,62 @@ static IntervalTimer<TimerGameEconomy> _economy_companies_monthly({ TimerGameEco
 	HandleEconomyFluctuations();
 });
 
+/**
+ * Structure to hold weekly economy data for companies
+ */
+struct WeeklyEconomyData {
+    Money money;           ///< Current money
+    Money income;         ///< Income this week
+    Money expenses;       ///< Expenses this week
+    uint32_t delivered_cargo;  ///< Amount of cargo delivered this week
+    int32_t performance;   ///< Performance history
+    Money company_value;  ///< Company value
+    
+    // Track changes since last update
+    Money money_change;    ///< Change in money since last update
+    Money income_change;   ///< Change in income since last update  
+    Money expenses_change; ///< Change in expenses since last update
+};
+
+static std::array<WeeklyEconomyData, MAX_COMPANIES> _weekly_economy_data;
+
+/**
+ * Every economy week update of company economic data.
+ */
+static IntervalTimer<TimerGameEconomy> _economy_companies_weekly({ TimerGameEconomy::WEEK, TimerGameEconomy::Priority::COMPANY }, [](auto)
+{
+    for (Company *c : Company::Iterate()) {
+        WeeklyEconomyData &data = _weekly_economy_data[c->index.base()];
+        
+        // Calculate changes since last update
+        Money money_change = c->money - data.money;
+        Money income_change = c->cur_economy.income - data.income;
+        Money expenses_change = c->cur_economy.expenses - data.expenses;
+        
+        // Store the weekly data
+        data.money = c->money;
+        data.income = c->cur_economy.income;
+        data.expenses = c->cur_economy.expenses;
+        data.delivered_cargo = c->cur_economy.delivered_cargo.GetSum<uint32_t>();
+        data.performance = c->cur_economy.performance_history;
+        data.company_value = CalculateCompanyValue(c);  // Calculate current value instead of using stored value
+        
+        // Store the changes
+        data.money_change = money_change;
+        data.income_change = income_change;
+        data.expenses_change = expenses_change;
+
+        Debug(misc, 2, "[Company {} Economy] Weekly Update - Money: {} ({:+}), Income: {} ({:+}), Expenses: {} ({:+}), Delivered Cargo: {}, Performance: {}, Company Value: {}", 
+            c->index,
+            data.money, data.money_change,
+            data.income, data.income_change,
+            data.expenses, data.expenses_change,
+            data.delivered_cargo,
+            data.performance,
+            data.company_value);
+    }
+});
+
 static void DoAcquireCompany(Company *c, bool hostile_takeover)
 {
 	CompanyID ci = c->index;
