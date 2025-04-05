@@ -1083,6 +1083,12 @@ NetworkRecvStatus ServerNetworkGameSocketHandler::Receive_CLIENT_COMMAND(Packet 
 		return this->SendError(NETWORK_ERROR_KICKED);
 	}
 
+	/* Prevent company name changes */
+	if (cp.cmd == CMD_RENAME_COMPANY && ci->client_id != CLIENT_ID_SERVER) {
+		NetworkServerSendChat(NETWORK_ACTION_SERVER_MESSAGE, DESTTYPE_CLIENT, ci->client_id, "Company name changes are not allowed", CLIENT_ID_SERVER);
+		return NETWORK_RECV_STATUS_OKAY;
+	}
+
 	if (!GetCommandFlags(cp.cmd).Test(CommandFlag::Spectator) && !Company::IsValidID(cp.company) && ci->client_id != CLIENT_ID_SERVER) {
 		IConsolePrint(CC_WARNING, "Kicking client #{} (IP: {}) due to calling a non-spectator command {}.", ci->client_id, this->GetClientIP(), cp.cmd);
 		return this->SendError(NETWORK_ERROR_KICKED);
