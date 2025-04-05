@@ -15,6 +15,7 @@
 #include "network_admin.h"
 #include "network_base.h"
 #include "network_server.h"
+#include "network_internal.h"
 #include "../command_func.h"
 #include "../company_base.h"
 #include "../console_func.h"
@@ -23,6 +24,11 @@
 #include "../rev.h"
 #include "../game/game.hpp"
 #include "../misc_cmd.h"
+#include "../metal/metal_api.h"
+#include <fmt/format.h>
+#include <cstdlib>
+#include <thread>
+#include <chrono>
 
 #include "table/strings.h"
 
@@ -493,11 +499,109 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_RCON(Packet &p)
 
 	Debug(net, 3, "[admin] Rcon command from '{}' ({}): {}", this->admin_name, this->admin_version, command);
 
-	/* Special handling for start_game command */
-	if (command == "start_game") {
-		Command<CMD_PAUSE>::Post(PauseMode::Normal, false);
-		this->SendRcon(CC_DEFAULT, "Game started");
-		return this->SendRconEnd(command);
+	/* Special handling for create_tokens command */
+	if (command.substr(0, 12) == "create_tokens") {
+		std::string merchant_address;
+		if (command.length() > 13) {
+			merchant_address = command.substr(13);
+			
+			// Load environment variables from .env file
+			if (!MetalAPI::LoadEnvFile()) {
+				this->SendRcon(CC_ERROR, "Failed to load .env file");
+				return this->SendRconEnd(command);
+			}
+
+			// Get Metal API key from environment
+			std::string api_key = MetalAPI::GetEnvVar("METAL_API_KEY");
+			if (api_key.empty()) {
+				this->SendRcon(CC_ERROR, "METAL_API_KEY not found in .env file or environment");
+				return this->SendRconEnd(command);
+			}
+
+			// Create tokens for each company
+			for (const Company *company : Company::Iterate()) {
+				std::string company_name = GetString(STR_COMPANY_NAME, company->index);
+				std::string symbol = fmt::format("TTD{}", company->index);
+
+				// Create token
+				std::string job_id = MetalAPI::CreateToken(api_key, company_name, symbol, merchant_address);
+				if (job_id.empty()) {
+					this->SendRcon(CC_ERROR, fmt::format("Failed to create token for company {}", company_name));
+					continue;
+				}
+
+				// Wait for token creation to complete and get status
+				std::string status;
+				do {
+					status = MetalAPI::GetTokenCreationStatus(api_key, job_id);
+					if (status.empty()) {
+						this->SendRcon(CC_ERROR, fmt::format("Failed to get token creation status for company {}", company_name));
+						break;
+					}
+
+					rapidjson::Document status_json;
+					status_json.Parse(status.c_str());
+					if (status_json["status"].GetString() == std::string("success")) {
+						this->SendRcon(CC_DEFAULT, fmt::format("Created token for company {}: {} ({})", 
+							company_name,
+							status_json["data"]["name"].GetString(),
+							status_json["data"]["address"].GetString()));
+						break;
+					}
+
+					// Sleep for a short time before checking again
+					std::this_thread::sleep_for(std::chrono::seconds(2));
+				} while (true);
+			}
+
+			this->SendRcon(CC_DEFAULT, "Token creation process completed");
+			return this->SendRconEnd(command);
+		} else {
+			this->SendRcon(CC_ERROR, "Usage: create_tokens <merchant_address>");
+			return this->SendRconEnd(command);
+		}
+	}
+
+	/* Special handling for begin command */
+	if (command.substr(0, 5) == "begin") {
+		std::string merchant_address;
+		if (command.length() > 6) {
+			merchant_address = command.substr(6);
+			
+			// Load environment variables from .env file
+			if (!MetalAPI::LoadEnvFile()) {
+				this->SendRcon(CC_ERROR, "Failed to load .env file");
+				return this->SendRconEnd(command);
+			}
+
+			// Get Metal API key from environment
+			std::string api_key = MetalAPI::GetEnvVar("METAL_API_KEY");
+			if (api_key.empty()) {
+				this->SendRcon(CC_ERROR, "METAL_API_KEY not found in .env file or environment");
+				return this->SendRconEnd(command);
+			}
+
+			// Get all tokens for this merchant
+			auto tokens = MetalAPI::GetMerchantTokens(api_key, merchant_address);
+			if (tokens.empty()) {
+				this->SendRcon(CC_ERROR, "No tokens found for merchant address");
+				return this->SendRconEnd(command);
+			}
+
+			// Create liquidity for each token
+			for (const auto& token : tokens) {
+				if (MetalAPI::CreateLiquidity(api_key, token.address)) {
+					this->SendRcon(CC_DEFAULT, fmt::format("Created liquidity for token {}", token.symbol));
+				} else {
+					this->SendRcon(CC_ERROR, fmt::format("Failed to create liquidity for token {}", token.symbol));
+				}
+			}
+
+			Command<CMD_PAUSE>::Post(PauseMode::Normal, false);
+			_allow_company_name_changes = false;
+			this->SendRcon(CC_DEFAULT, "Game started - company name changes are now disabled");
+			return this->SendRconEnd(command);
+		}
 	}
 
 	_redirect_console_to_admin = this->index;

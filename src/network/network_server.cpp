@@ -41,6 +41,10 @@
 
 #include "../safeguards.h"
 
+#include "network_internal.h"
+
+/** Whether company name changes are allowed (disabled after game begins) */
+bool _allow_company_name_changes = true;
 
 /* This file handles all the server-commands */
 
@@ -1083,8 +1087,8 @@ NetworkRecvStatus ServerNetworkGameSocketHandler::Receive_CLIENT_COMMAND(Packet 
 		return this->SendError(NETWORK_ERROR_KICKED);
 	}
 
-	/* Prevent company name changes */
-	if (cp.cmd == CMD_RENAME_COMPANY && ci->client_id != CLIENT_ID_SERVER) {
+	/* Prevent company name changes if not allowed */
+	if (cp.cmd == CMD_RENAME_COMPANY && !_allow_company_name_changes && ci->client_id != CLIENT_ID_SERVER) {
 		NetworkServerSendChat(NETWORK_ACTION_SERVER_MESSAGE, DESTTYPE_CLIENT, ci->client_id, "Company name changes are not allowed", CLIENT_ID_SERVER);
 		return NETWORK_RECV_STATUS_OKAY;
 	}

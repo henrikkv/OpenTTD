@@ -81,6 +81,9 @@ extern std::string _network_server_name;
 
 extern uint8_t _network_reconnect;
 
+/** Whether company name changes are allowed (disabled after game begins) */
+extern bool _allow_company_name_changes;
+
 void NetworkQueryServer(const std::string &connection_string);
 
 void GetBindAddresses(NetworkAddressList *addresses, uint16_t port);

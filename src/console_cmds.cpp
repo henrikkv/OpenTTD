@@ -2931,5 +2931,5 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("dump_info",               ConDumpInfo);
 
 	/* Define the new start_game command */
-	IConsole::CmdRegister("start_game", ConStartGame, ConHookServerOrNoNetwork);
+	IConsole::CmdRegister("begin", ConStartGame, ConHookServerOrNoNetwork);
 }
