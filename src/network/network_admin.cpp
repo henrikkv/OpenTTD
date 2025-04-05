@@ -501,112 +501,71 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_RCON(Packet &p)
 
 	/* Special handling for create_tokens command */
 	if (command.substr(0, 12) == "create_tokens") {
-		std::string merchant_address;
-		if (command.length() > 13) {
-			merchant_address = command.substr(13);
-			
-			// Load environment variables from .env file
-			if (!MetalAPI::LoadEnvFile()) {
-				this->SendRcon(CC_ERROR, "Failed to load .env file");
-				return this->SendRconEnd(command);
-			}
-
-			// Get Metal API key from environment
-			std::string api_key = MetalAPI::GetEnvVar("METAL_API_KEY");
-			if (api_key.empty()) {
-				this->SendRcon(CC_ERROR, "METAL_API_KEY not found in .env file or environment");
-				return this->SendRconEnd(command);
-			}
-
-			// Create tokens for each company
-			for (const Company *company : Company::Iterate()) {
-				std::string company_name = GetString(STR_COMPANY_NAME, company->index);
-				std::string symbol = fmt::format("TTD{}", company->index);
-
-				// Create token
-				std::string job_id = MetalAPI::CreateToken(api_key, company_name, symbol, merchant_address);
-				if (job_id.empty()) {
-					this->SendRcon(CC_ERROR, fmt::format("Failed to create token for company {}", company_name));
-					continue;
-				}
-
-				// Wait for token creation to complete and get status
-				std::string status;
-				do {
-					status = MetalAPI::GetTokenCreationStatus(api_key, job_id);
-					if (status.empty()) {
-						this->SendRcon(CC_ERROR, fmt::format("Failed to get token creation status for company {}", company_name));
-						break;
-					}
-
-					rapidjson::Document status_json;
-					status_json.Parse(status.c_str());
-					if (status_json["status"].GetString() == std::string("success")) {
-						this->SendRcon(CC_DEFAULT, fmt::format("Created token for company {}: {} ({})", 
-							company_name,
-							status_json["data"]["name"].GetString(),
-							status_json["data"]["address"].GetString()));
-						break;
-					}
-
-					// Sleep for a short time before checking again
-					std::this_thread::sleep_for(std::chrono::seconds(2));
-				} while (true);
-			}
-
-			this->SendRcon(CC_DEFAULT, "Token creation process completed");
-			return this->SendRconEnd(command);
-		} else {
-			this->SendRcon(CC_ERROR, "Usage: create_tokens <merchant_address>");
+		IConsolePrint(CC_DEFAULT, "[Metal] Starting token creation process...");
+		
+		// Get Metal API key and merchant address from environment
+		std::string api_key = MetalAPI::GetEnvVar("METAL_API_KEY");
+		std::string merchant_address = MetalAPI::GetEnvVar("METAL_MERCHANT");
+		if (api_key.empty()) {
+			IConsolePrint(CC_ERROR, "[Metal] METAL_API_KEY not found in environment");
+			this->SendRcon(CC_ERROR, "METAL_API_KEY not found in environment");
 			return this->SendRconEnd(command);
 		}
+		if (merchant_address.empty()) {
+			IConsolePrint(CC_ERROR, "[Metal] METAL_MERCHANT not found in environment");
+			this->SendRcon(CC_ERROR, "METAL_MERCHANT not found in environment");
+			return this->SendRconEnd(command);
+		}
+		
+		if (MetalAPI::IsTaskRunning()) {
+			IConsolePrint(CC_ERROR, "[Metal] A Metal API task is already running");
+			this->SendRcon(CC_ERROR, "A Metal API task is already running");
+			return this->SendRconEnd(command);
+		}
+		
+		if (MetalAPI::StartTokenCreationTask(api_key, merchant_address)) {
+			this->SendRcon(CC_DEFAULT, "Token creation process started in background");
+		} else {
+			this->SendRcon(CC_ERROR, "Failed to start token creation process");
+		}
+		
+		return this->SendRconEnd(command);
 	}
 
 	/* Special handling for begin command */
 	if (command.substr(0, 5) == "begin") {
-		std::string merchant_address;
-		if (command.length() > 6) {
-			merchant_address = command.substr(6);
-			
-			// Load environment variables from .env file
-			if (!MetalAPI::LoadEnvFile()) {
-				this->SendRcon(CC_ERROR, "Failed to load .env file");
-				return this->SendRconEnd(command);
-			}
-
-			// Get Metal API key from environment
-			std::string api_key = MetalAPI::GetEnvVar("METAL_API_KEY");
-			if (api_key.empty()) {
-				this->SendRcon(CC_ERROR, "METAL_API_KEY not found in .env file or environment");
-				return this->SendRconEnd(command);
-			}
-
-			// Get all tokens for this merchant
-			auto tokens = MetalAPI::GetMerchantTokens(api_key, merchant_address);
-			if (tokens.empty()) {
-				this->SendRcon(CC_ERROR, "No tokens found for merchant address");
-				return this->SendRconEnd(command);
-			}
-
-			// Create liquidity for each token
-			for (const auto& token : tokens) {
-				if (MetalAPI::CreateLiquidity(api_key, token.address)) {
-					this->SendRcon(CC_DEFAULT, fmt::format("Created liquidity for token {}", token.symbol));
-				} else {
-					this->SendRcon(CC_ERROR, fmt::format("Failed to create liquidity for token {}", token.symbol));
-				}
-			}
-
-			Command<CMD_PAUSE>::Post(PauseMode::Normal, false);
-			_allow_company_name_changes = false;
-			this->SendRcon(CC_DEFAULT, "Game started - company name changes are now disabled");
+		IConsolePrint(CC_DEFAULT, "[Metal] Starting Metal blockchain game initialization...");
+		
+		// Get Metal API key and merchant address from environment
+		std::string api_key = MetalAPI::GetEnvVar("METAL_API_KEY");
+		std::string merchant_address = MetalAPI::GetEnvVar("METAL_MERCHANT");
+		if (api_key.empty()) {
+			this->SendRcon(CC_ERROR, "METAL_API_KEY not found in environment");
+			IConsolePrint(CC_ERROR, "[Metal] METAL_API_KEY not found in configuration");
 			return this->SendRconEnd(command);
 		}
+		if (merchant_address.empty()) {
+			this->SendRcon(CC_ERROR, "METAL_MERCHANT not found in environment");
+			IConsolePrint(CC_ERROR, "[Metal] METAL_MERCHANT not found in configuration");
+			return this->SendRconEnd(command);
+		}
+		
+		if (MetalAPI::IsTaskRunning()) {
+			IConsolePrint(CC_ERROR, "[Metal] A Metal API task is already running");
+			this->SendRcon(CC_ERROR, "A Metal API task is already running");
+			return this->SendRconEnd(command);
+		}
+
+		if (MetalAPI::StartGameInitializationTask(api_key, merchant_address)) {
+			this->SendRcon(CC_DEFAULT, "Game initialization started in background");
+		} else {
+			this->SendRcon(CC_ERROR, "Failed to start game initialization process");
+		}
+		
+		return this->SendRconEnd(command);
 	}
 
 	_redirect_console_to_admin = this->index;
-	IConsoleCmdExec(command);
-	_redirect_console_to_admin = AdminID::Invalid();
 	return this->SendRconEnd(command);
 }
 

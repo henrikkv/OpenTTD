@@ -48,6 +48,9 @@
 
 #include "../safeguards.h"
 
+#include "../metal/metal_api.h"
+#include "../string_func.h"
+
 #ifdef DEBUG_DUMP_COMMANDS
 /** Helper variable to make the dedicated server go fast until the (first) join.
  * Used to load the desync debug logs, i.e. for reproducing a desync.
@@ -1300,11 +1303,20 @@ void NetworkStartUp()
 	Debug(net, 3, "Network online, multiplayer available");
 	NetworkFindBroadcastIPs(&_broadcast_list);
 	NetworkHTTPInitialize();
+	
+	/* Initialize Metal API */
+	if (MetalAPI::Initialize()) {
+		Debug(net, 3, "Metal API initialized");
+	}
 }
 
 /** This shuts the network down */
 void NetworkShutDown()
 {
+	/* Shut down Metal API */
+	MetalAPI::Shutdown();
+	Debug(net, 3, "Metal API shut down");
+	
 	NetworkDisconnect();
 	NetworkHTTPUninitialize();
 	NetworkUDPClose();

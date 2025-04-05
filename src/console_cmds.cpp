@@ -44,6 +44,10 @@
 #include "3rdparty/fmt/chrono.h"
 #include "company_cmd.h"
 #include "misc_cmd.h"
+#include "metal/metal_api.h"
+#include <rapidjson/document.h>
+#include <thread>
+#include <chrono>
 
 #include <sstream>
 
@@ -2781,9 +2785,115 @@ DEF_CONSOLE_CMD(ConStartGame)
         return true;
     }
 
+    NetworkAdminConsole("console", "begin");
+    IConsolePrint(CC_DEFAULT, "Starting game initialization...");
+
     Command<CMD_PAUSE>::Post(PauseMode::Normal, false);
     IConsolePrint(CC_DEFAULT, "Game started.");
 
+    return true;
+}
+
+/* Define the create_tokens command */
+DEF_CONSOLE_CMD(ConCreateTokens)
+{
+    if (argc == 0) {
+        IConsolePrint(CC_HELP, "Create tokens for all companies. Usage: 'create_tokens'.");
+        return true;
+    }
+
+    if (_game_mode == GM_MENU) {
+        IConsolePrint(CC_ERROR, "This command is only available in-game and in the editor.");
+        return true;
+    }
+
+    IConsolePrint(CC_DEFAULT, "Starting Metal token creation process...");
+    
+    // Get Metal API key and merchant address from environment
+    std::string api_key = MetalAPI::GetEnvVar("METAL_API_KEY");
+    std::string merchant_address = MetalAPI::GetEnvVar("METAL_MERCHANT");
+    if (api_key.empty()) {
+        IConsolePrint(CC_ERROR, "METAL_API_KEY not found in environment");
+        return true;
+    }
+    if (merchant_address.empty()) {
+        IConsolePrint(CC_ERROR, "METAL_MERCHANT not found in environment");
+        return true;
+    }
+    IConsolePrint(CC_DEFAULT, "Found API key and merchant address");
+
+    // Create tokens for each company
+    int company_count = 0;
+    for (const Company *company : Company::Iterate()) {
+        company_count++;
+        std::string company_name = GetString(STR_COMPANY_NAME, company->index);
+        std::string symbol = fmt::format("TTD{}", company->index);
+
+        IConsolePrint(CC_DEFAULT, "Processing company {} of {}: {} ({})", 
+            company_count, Company::GetPoolSize(), company_name, symbol);
+
+        // Create token
+        IConsolePrint(CC_DEFAULT, "Creating token for {} with symbol {}", company_name, symbol);
+        std::string job_id = MetalAPI::CreateToken(api_key, company_name, symbol, merchant_address);
+        if (job_id.empty()) {
+            IConsolePrint(CC_ERROR, "Failed to create token for company {} - API call failed", company_name);
+            continue;
+        }
+        IConsolePrint(CC_DEFAULT, "Got job ID {} for token creation", job_id);
+
+        // Wait for token creation to complete and get status
+        std::string status;
+        int retry_count = 0;
+        do {
+            retry_count++;
+            IConsolePrint(CC_DEFAULT, "Checking token status (attempt {})...", retry_count);
+            
+            status = MetalAPI::GetTokenCreationStatus(api_key, job_id);
+            if (status.empty()) {
+                IConsolePrint(CC_ERROR, "Failed to get token status - API call failed");
+                break;
+            }
+
+            rapidjson::Document status_json;
+            status_json.Parse(status.c_str());
+            
+            std::string current_status = status_json["status"].GetString();
+            IConsolePrint(CC_DEFAULT, "Current status: {}", current_status);
+            
+            if (current_status == "success") {
+                std::string token_name = status_json["data"]["name"].GetString();
+                std::string token_address = status_json["data"]["address"].GetString();
+                
+                IConsolePrint(CC_DEFAULT, "Successfully created token:");
+                IConsolePrint(CC_DEFAULT, "  Name: {}", token_name);
+                IConsolePrint(CC_DEFAULT, "  Address: {}", token_address);
+                break;
+            } else if (current_status == "pending") {
+                IConsolePrint(CC_DEFAULT, "Token creation still in progress, waiting...");
+            } else {
+                IConsolePrint(CC_ERROR, "Unexpected status: {}", current_status);
+                break;
+            }
+
+            // Sleep for a short time before checking again
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        } while (retry_count < 30); // Add a maximum retry limit
+        
+        if (retry_count >= 30) {
+            IConsolePrint(CC_ERROR, "Gave up waiting for token creation after 30 attempts");
+        }
+    }
+
+    if (company_count == 0) {
+        IConsolePrint(CC_ERROR, "No companies found to process");
+    } else {
+        IConsolePrint(CC_DEFAULT, "Finished processing {} companies", company_count);
+    }
+    
+    IConsolePrint(CC_DEFAULT, "Token creation process completed");
+
+    // Still notify the admin network that this command was executed
+    NetworkAdminConsole("console", "create_tokens");
     return true;
 }
 
@@ -2931,5 +3041,8 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("dump_info",               ConDumpInfo);
 
 	/* Define the new start_game command */
-	IConsole::CmdRegister("begin", ConStartGame, ConHookServerOrNoNetwork);
+	IConsole::CmdRegister("begin",                   ConStartGame,             ConHookServerOrNoNetwork);
+	IConsole::CmdRegister("create_tokens",           ConCreateTokens,          ConHookServerOrNoNetwork);
+
+	/* debugging stuff */
 }
