@@ -2769,6 +2769,24 @@ DEF_CONSOLE_CMD(ConDumpInfo)
  * console command registration
  *******************************/
 
+DEF_CONSOLE_CMD(ConStartGame)
+{
+    if (argc == 0) {
+        IConsolePrint(CC_HELP, "Start the game by unpausing it. Usage: 'start_game'.");
+        return true;
+    }
+
+    if (_game_mode == GM_MENU) {
+        IConsolePrint(CC_ERROR, "This command is only available in-game and in the editor.");
+        return true;
+    }
+
+    Command<CMD_PAUSE>::Post(PauseMode::Normal, false);
+    IConsolePrint(CC_DEFAULT, "Game started.");
+
+    return true;
+}
+
 void IConsoleStdLibRegister()
 {
 	IConsole::CmdRegister("debug_level",             ConDebugLevel);
@@ -2911,4 +2929,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("newgrf_profile",          ConNewGRFProfile,    ConHookNewGRFDeveloperTool);
 
 	IConsole::CmdRegister("dump_info",               ConDumpInfo);
+
+	/* Define the new start_game command */
+	IConsole::CmdRegister("start_game", ConStartGame, ConHookServerOrNoNetwork);
 }

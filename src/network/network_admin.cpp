@@ -22,6 +22,7 @@
 #include "../map_func.h"
 #include "../rev.h"
 #include "../game/game.hpp"
+#include "../misc_cmd.h"
 
 #include "table/strings.h"
 
@@ -491,6 +492,13 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_RCON(Packet &p)
 	std::string command = p.Recv_string(NETWORK_RCONCOMMAND_LENGTH);
 
 	Debug(net, 3, "[admin] Rcon command from '{}' ({}): {}", this->admin_name, this->admin_version, command);
+
+	/* Special handling for start_game command */
+	if (command == "start_game") {
+		Command<CMD_PAUSE>::Post(PauseMode::Normal, false);
+		this->SendRcon(CC_DEFAULT, "Game started");
+		return this->SendRconEnd(command);
+	}
 
 	_redirect_console_to_admin = this->index;
 	IConsoleCmdExec(command);

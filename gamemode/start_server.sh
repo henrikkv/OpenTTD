@@ -8,13 +8,14 @@ SERVER_NAME="Custom Gamemode Server"
 LOAD_GAME=""
 
 
-cd ..
+cd ../build
 
-cmake --build build
+cmake ..
+make -j32
 
-cd build && ./openttd \
+./openttd \
     -D \
-    -d script=3 \
+    -d misc=3 \
     -X \
     -g welcome_message \
     -c ../gamemode/openttd.cfg \

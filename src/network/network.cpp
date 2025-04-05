@@ -845,6 +845,9 @@ static void NetworkInitGameInfo()
 
 	NetworkAuthenticationClientHandler::EnsureValidSecretKeyAndUpdatePublicKey(_settings_client.network.client_secret_key, _settings_client.network.client_public_key);
 	ci->public_key = _settings_client.network.client_public_key;
+
+	/* Pause the game on server start */
+	Command<CMD_PAUSE>::Post(PauseMode::Normal, true);
 }
 
 /**
