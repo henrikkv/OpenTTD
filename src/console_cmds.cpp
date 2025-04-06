@@ -2864,6 +2864,10 @@ DEF_CONSOLE_CMD(ConCreateTokens)
                 std::string token_name = status_json["data"]["name"].GetString();
                 std::string token_address = status_json["data"]["address"].GetString();
                 
+                // Store the token address in the company structure
+                Company *c = Company::Get(company->index);
+                c->token_contract_address = token_address;
+                
                 IConsolePrint(CC_DEFAULT, "Successfully created token:");
                 IConsolePrint(CC_DEFAULT, "  Name: {}", token_name);
                 IConsolePrint(CC_DEFAULT, "  Address: {}", token_address);

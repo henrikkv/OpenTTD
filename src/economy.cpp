@@ -56,12 +56,104 @@
 #include "timer/timer.h"
 #include "timer/timer_game_calendar.h"
 #include "timer/timer_game_economy.h"
+#include "curl/curl.h"
+#include <rapidjson/document.h>
 
 #include "table/strings.h"
 #include "table/pricebase.h"
 
 #include "safeguards.h"
 
+/* Add helper function for curl */
+static size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::string *userp)
+{
+    userp->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
+/* Add token price fetching function */
+static void FetchTokenPrices()
+{
+    // Collect all valid token addresses
+    std::vector<std::string> token_addresses;
+    std::map<std::string, CompanyID> address_to_company;
+    
+    for (const Company *c : Company::Iterate()) {
+        if (!c->token_contract_address.empty()) {
+            token_addresses.push_back(c->token_contract_address);
+            address_to_company[c->token_contract_address] = c->index;
+        }
+    }
+    
+    if (token_addresses.empty()) return; // No tokens to fetch prices for
+    
+    // Prepare the JSON payload with token addresses
+    std::string payload = "{\"contractAddresses\":[";
+    for (size_t i = 0; i < token_addresses.size(); i++) {
+        if (i > 0) payload += ",";
+        payload += "\"" + token_addresses[i] + "\"";
+    }
+    payload += "],\"currency\":\"USD\"}";
+    
+    // Initialize curl
+    CURL *curl = curl_easy_init();
+    if (!curl) return;
+    
+    std::string response_data;
+    
+    // Set curl options
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+    curl_easy_setopt(curl, CURLOPT_URL, "https://web3.nodit.io/v1/base/mainnet/token/getTokenPricesByContracts");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+    
+    // Set headers
+    struct curl_slist *headers = nullptr;
+    headers = curl_slist_append(headers, "accept: application/json");
+    headers = curl_slist_append(headers, "content-type: application/json");
+    headers = curl_slist_append(headers, "X-API-KEY: nodit-demo"); // Replace with actual API key
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    
+    // Set post data
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
+    
+    // Perform the request
+    CURLcode res = curl_easy_perform(curl);
+    
+    if (res == CURLE_OK) {
+        // Parse JSON response
+        rapidjson::Document doc;
+        doc.Parse(response_data.c_str());
+        
+        if (!doc.HasParseError() && doc.IsObject() && doc.HasMember("data") && doc["data"].IsArray()) {
+            for (const auto& token_data : doc["data"].GetArray()) {
+                if (token_data.IsObject() && 
+                    token_data.HasMember("contractAddress") && 
+                    token_data.HasMember("price")) {
+                    
+                    std::string address = token_data["contractAddress"].GetString();
+                    double price = token_data["price"].GetDouble();
+                    
+                    // Find the company with this token address
+                    auto it = address_to_company.find(address);
+                    if (it != address_to_company.end()) {
+                        Company *c = Company::Get(it->second);
+                        c->token_price = price;
+                        
+                        Debug(misc, 1, "Updated token price for company {}: ${:.6f}", 
+                              it->second, price);
+                    }
+                }
+            }
+        }
+    } else {
+        Debug(misc, 0, "Failed to fetch token prices: {}", curl_easy_strerror(res));
+    }
+    
+    // Clean up
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+}
 
 /* Initialize the cargo payment-pool */
 CargoPaymentPool _cargo_payment_pool("CargoPayment");
@@ -149,13 +241,17 @@ static Money CalculateCompanyAssetValue(const Company *c)
  */
 Money CalculateCompanyValue(const Company *c, bool including_loan)
 {
-	Money value = CalculateCompanyAssetValue(c);
+    Money value = CalculateCompanyAssetValue(c);
 
-	/* Add real money value */
-	if (including_loan) value -= c->current_loan;
-	value += c->money;
+    if (including_loan) value -= c->current_loan;
+    value += c->money;
 
-	return std::max<Money>(value, 1);
+    /* Add simple token price bonus - 1000 per dollar of token price */
+    if (c->token_price > 0) {
+        value += 1000 * (Money)c->token_price;
+    }
+
+    return std::max<Money>(value, 1);
 }
 
 /**
@@ -1966,25 +2062,21 @@ void LoadUnloadStation(Station *st)
 	_cargo_delivery_destinations.clear();
 }
 
-/**
- * Every calendar month update of inflation.
- */
+/* Every calendar month update of inflation. */
 static IntervalTimer<TimerGameCalendar> _calendar_inflation_monthly({TimerGameCalendar::MONTH, TimerGameCalendar::Priority::COMPANY}, [](auto)
 {
-	if (_settings_game.economy.inflation) {
-		AddInflation();
-		RecomputePrices();
-	}
+    if (_settings_game.economy.inflation) {
+        AddInflation();
+        RecomputePrices();
+    }
 });
 
-/**
- * Every economy month update of company economic data, plus economy fluctuations.
- */
+/* Every economy month update of company economic data, plus economy fluctuations. */
 static IntervalTimer<TimerGameEconomy> _economy_companies_monthly({ TimerGameEconomy::MONTH, TimerGameEconomy::Priority::COMPANY }, [](auto)
 {
-	CompaniesGenStatistics();
-	CompaniesPayInterest();
-	HandleEconomyFluctuations();
+    CompaniesGenStatistics();
+    CompaniesPayInterest();
+    HandleEconomyFluctuations();
 });
 
 /**
@@ -2011,6 +2103,9 @@ static std::array<WeeklyEconomyData, MAX_COMPANIES> _weekly_economy_data;
  */
 static IntervalTimer<TimerGameEconomy> _economy_companies_weekly({ TimerGameEconomy::WEEK, TimerGameEconomy::Priority::COMPANY }, [](auto)
 {
+    // First, update token prices using API
+    FetchTokenPrices();
+    
     for (Company *c : Company::Iterate()) {
         WeeklyEconomyData &data = _weekly_economy_data[c->index.base()];
         
@@ -2025,20 +2120,30 @@ static IntervalTimer<TimerGameEconomy> _economy_companies_weekly({ TimerGameEcon
         data.expenses = c->cur_economy.expenses;
         data.delivered_cargo = c->cur_economy.delivered_cargo.GetSum<uint32_t>();
         data.performance = c->cur_economy.performance_history;
-        data.company_value = CalculateCompanyValue(c);  // Calculate current value instead of using stored value
+        
+        // Calculate token value bonus
+        Money token_bonus = 0;
+        if (c->token_price > 0) {
+            token_bonus = 1000 * (Money)c->token_price;
+            c->old_economy[0].company_value += token_bonus;
+        }
+        
+        // Store updated company value
+        data.company_value = CalculateCompanyValue(c);
         
         // Store the changes
         data.money_change = money_change;
         data.income_change = income_change;
         data.expenses_change = expenses_change;
 
-        Debug(misc, 2, "[Company {} Economy] Weekly Update - Money: {} ({:+}), Income: {} ({:+}), Expenses: {} ({:+}), Delivered Cargo: {}, Performance: {}, Company Value: {}", 
+        Debug(misc, 1, "[Company {} Economy] Weekly Update - Money: {} ({:+}), Income: {} ({:+}), Expenses: {} ({:+}), Delivered Cargo: {}, Token Price: ${:.6f}, Token Bonus: {}, Company Value: {}", 
             c->index,
             data.money, data.money_change,
             data.income, data.income_change,
             data.expenses, data.expenses_change,
             data.delivered_cargo,
-            data.performance,
+            c->token_price,
+            token_bonus,
             data.company_value);
     }
 });

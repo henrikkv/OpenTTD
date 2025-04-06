@@ -84,6 +84,9 @@ struct CompanyProperties {
 	Money current_loan = 0; ///< Amount of money borrowed from the bank.
 	Money max_loan = COMPANY_MAX_LOAN_DEFAULT; ///< Max allowed amount of the loan or COMPANY_MAX_LOAN_DEFAULT.
 
+	std::string token_contract_address{}; ///< The Base contract address for this company's token
+	double token_price = 0.0; ///< Current token price in USD
+
 	Colours colour = COLOUR_BEGIN; ///< Company colour.
 
 	uint8_t block_preview = 0; ///< Number of quarters that the company is not allowed to get new exclusive engine previews (see CompaniesGenStatistics).
