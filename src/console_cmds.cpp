@@ -2776,7 +2776,7 @@ DEF_CONSOLE_CMD(ConDumpInfo)
 DEF_CONSOLE_CMD(ConStartGame)
 {
     if (argc == 0) {
-        IConsolePrint(CC_HELP, "Start the game by unpausing it. Usage: 'start_game'.");
+        IConsolePrint(CC_HELP, "Start the game by unpausing it and initializing token liquidity pools. Usage: 'start_game'.");
         return true;
     }
 
@@ -2788,6 +2788,42 @@ DEF_CONSOLE_CMD(ConStartGame)
     NetworkAdminConsole("console", "begin");
     IConsolePrint(CC_DEFAULT, "Starting game initialization...");
 
+    // Get Metal API key
+    std::string api_key = MetalAPI::GetEnvVar("METAL_API_KEY");
+    if (api_key.empty()) {
+        IConsolePrint(CC_ERROR, "METAL_API_KEY not found in environment");
+        return true;
+    }
+
+    // Create liquidity pools for all company tokens
+    int company_count = 0;
+    for (const Company *company : Company::Iterate()) {
+        company_count++;
+        std::string company_name = GetString(STR_COMPANY_NAME, company->index);
+        
+        // Skip if company has no token address
+        if (company->token_contract_address.empty()) {
+            IConsolePrint(CC_WARNING, "Company {} has no token address, skipping liquidity pool creation", company_name);
+            continue;
+        }
+
+        IConsolePrint(CC_DEFAULT, "Creating liquidity pool for {} (token address: {})", 
+            company_name, company->token_contract_address);
+
+        if (MetalAPI::CreateLiquidityPool(api_key, company->token_contract_address)) {
+            IConsolePrint(CC_DEFAULT, "Successfully created liquidity pool for {}", company_name);
+        } else {
+            IConsolePrint(CC_ERROR, "Failed to create liquidity pool for {}", company_name);
+        }
+    }
+
+    if (company_count == 0) {
+        IConsolePrint(CC_ERROR, "No companies found to process");
+    } else {
+        IConsolePrint(CC_DEFAULT, "Finished creating liquidity pools for {} companies", company_count);
+    }
+
+    // Unpause the game
     Command<CMD_PAUSE>::Post(PauseMode::Normal, false);
     IConsolePrint(CC_DEFAULT, "Game started.");
 

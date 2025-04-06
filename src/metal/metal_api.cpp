@@ -508,4 +508,47 @@ bool MetalAPI::StartGameInitializationTask(const std::string& api_key, const std
     }).detach();
     
     return true;
+}
+
+/**
+ * Create a liquidity pool for a token.
+ * @param api_key The Metal API key.
+ * @param token_address The token contract address.
+ * @return True if liquidity pool was created successfully, false otherwise.
+ */
+bool MetalAPI::CreateLiquidityPool(const std::string &api_key, const std::string &token_address) 
+{
+    std::string url = fmt::format("https://api.metal.build/token/{}/liquidity", token_address);
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return false;
+
+    struct curl_slist *headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, fmt::format("x-api-key: {}", api_key).c_str());
+
+    std::string response;
+    
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    CURLcode res = curl_easy_perform(curl);
+    bool success = false;
+
+    if (res == CURLE_OK) {
+        rapidjson::Document doc;
+        doc.Parse(response.c_str());
+        
+        if (doc.HasMember("success") && doc["success"].GetBool()) {
+            success = true;
+        }
+    }
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    return success;
 } 

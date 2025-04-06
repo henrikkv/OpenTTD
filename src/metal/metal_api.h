@@ -112,6 +112,14 @@ public:
      */
     static bool IsTaskRunning();
 
+    /**
+     * Create a liquidity pool for a token.
+     * @param api_key The Metal API key.
+     * @param token_address The token contract address.
+     * @return True if liquidity pool was created successfully, false otherwise.
+     */
+    static bool CreateLiquidityPool(const std::string &api_key, const std::string &token_address);
+
 private:
     static std::atomic<bool> _initialized; ///< Whether the API has been initialized
     static std::atomic<bool> _task_running; ///< Whether a background task is currently running
